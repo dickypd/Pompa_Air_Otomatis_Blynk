@@ -1,0 +1,155 @@
+#define BLYNK_TEMPLATE_ID "TMPL6WqPI4M3A"
+#define BLYNK_TEMPLATE_NAME "Pompa Air Otomatis"
+#define BLYNK_AUTH_TOKEN "J_46u5SFUwvTvboD87lcaVE4-RwYRH2a"
+
+// Library
+#include <LiquidCrystal_I2C.h>
+#include <Wire.h>
+#include <WiFiClient.h>
+#include <BlynkSimpleEsp32.h>
+
+// Pin setup
+#define LED1 2
+#define LED2 4
+#define LED3 5
+#define LED4 18
+#define trig 12
+#define echo 13
+#define relay 14
+
+// Level tangki (dalam cm)
+int MaxLevel = 13;
+int Level1 = (MaxLevel * 75) / 100; // Very Low
+int Level2 = (MaxLevel * 65) / 100; // Low
+int Level3 = (MaxLevel * 55) / 100; // Medium
+int Level4 = (MaxLevel * 35) / 100; // Full
+
+// LCD
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+BlynkTimer timer;
+
+// WiFi & Blynk
+char auth[] = "J_46u5SFUwvTvboD87lcaVE4-RwYRH2a";
+char ssid[] = "Realme 6";
+char pass[] = "rivaldidd.";
+
+// Mode kontrol
+bool autoControl = true;  // Default: mode otomatis
+bool manualPumpState = false; // Menyimpan status tombol manual (V1)
+
+void setup() {
+  Serial.begin(115200);
+  Blynk.begin(auth, ssid, pass, "blynk.cloud", 80);
+  lcd.init();
+  lcd.backlight();
+
+  pinMode(LED1, OUTPUT);
+  pinMode(LED2, OUTPUT);
+  pinMode(LED3, OUTPUT);
+  pinMode(LED4, OUTPUT);
+  pinMode(trig, OUTPUT);
+  pinMode(echo, INPUT);
+  pinMode(relay, OUTPUT);
+
+  digitalWrite(relay, HIGH); // Pompa OFF saat start
+
+  lcd.setCursor(0, 0);
+  lcd.print("System");
+  lcd.setCursor(4, 1);
+  lcd.print("Loading...");
+  delay(3000);
+  lcd.clear();
+
+  timer.setInterval(1000L, ultrasonic); // panggil tiap 1 detik
+}
+
+void ultrasonic() {
+  digitalWrite(trig, LOW);
+  delayMicroseconds(4);
+  digitalWrite(trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+
+  long t = pulseIn(echo, HIGH);
+  int distance = t / 29 / 2;
+
+  Serial.print("Jarak Air: ");
+  Serial.println(distance);
+
+  int waterLevel = (distance - MaxLevel) * -1;
+  Blynk.virtualWrite(V0, waterLevel > 0 ? waterLevel : 0);
+
+  // Update tampilan level air di LCD & LED
+  lcd.setCursor(0, 0);
+  lcd.print("WLevel:        ");
+  lcd.setCursor(8, 0);
+
+  if (distance >= Level1) {
+    lcd.print("Very Low ");
+    digitalWrite(LED1, HIGH);
+    digitalWrite(LED2, LOW);
+    digitalWrite(LED3, LOW);
+    digitalWrite(LED4, LOW);
+  } else if (distance >= Level2) {
+    lcd.print("Low      ");
+    digitalWrite(LED1, HIGH);
+    digitalWrite(LED2, HIGH);
+    digitalWrite(LED3, LOW);
+    digitalWrite(LED4, LOW);
+  } else if (distance >= Level3) {
+    lcd.print("Medium   ");
+    digitalWrite(LED1, HIGH);
+    digitalWrite(LED2, HIGH);
+    digitalWrite(LED3, HIGH);
+    digitalWrite(LED4, LOW);
+  } else if (distance >= Level4) {
+    lcd.print("Full     ");
+    digitalWrite(LED1, HIGH);
+    digitalWrite(LED2, HIGH);
+    digitalWrite(LED3, HIGH);
+    digitalWrite(LED4, HIGH);
+  } else {
+    lcd.print("Overflow ");
+  }
+
+  // Logika otomatis pompa
+  if (autoControl) {
+    if (distance >= Level1) {
+      digitalWrite(relay, LOW); // Pompa ON
+    } else if (distance <= Level4) {
+      digitalWrite(relay, HIGH); // Pompa OFF
+    }
+  } else {
+    // Mode manual, gunakan nilai dari V1
+    digitalWrite(relay, manualPumpState ? LOW : HIGH);
+  }
+
+  // Update tampilan status pompa
+  lcd.setCursor(0, 1);
+  if (autoControl) {
+    if (digitalRead(relay) == LOW)
+      lcd.print("Auto: ON     ");
+    else
+      lcd.print("Auto: OFF    ");
+  } else {
+    if (manualPumpState)
+      lcd.print("Manual: ON   ");
+    else
+      lcd.print("Manual: OFF  ");
+  }
+}
+
+// Tombol kontrol pompa manual (Blynk V1)
+BLYNK_WRITE(V1) {
+  manualPumpState = param.asInt(); // simpan status
+}
+
+// Tombol mode otomatis/manual (Blynk V2)
+BLYNK_WRITE(V2) {
+  autoControl = param.asInt(); // true = otomatis, false = manual
+}
+
+void loop() {
+  Blynk.run();
+  timer.run();
+}
